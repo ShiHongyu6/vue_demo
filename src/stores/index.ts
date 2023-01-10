@@ -1,5 +1,5 @@
 import { defineStore } from "pinia";
-import { fetchData } from '@/fetch'
+import { fetchCovidData } from '@/fetch'
 
 export type CovidState = {
 
@@ -12,13 +12,17 @@ export const useCovidStore = defineStore('covid', {
         }
     },
 
+    getters: {
+        domesticData: (state) => {
+            return state.data.areaTree.filter((item: any) => item.name === '中国')[0]
+        },
+    },
 
     actions: {
-        async getData() {
-            const result = await fetchData();
-            console.log(result.data.data);
+        async fetchCovidData() {
+            const result = await fetchCovidData();
             //@ts-ignore
-            this.data = result.data.data;
+            this.data = result.data;
         }
     }
 })

@@ -11,3 +11,17 @@ export function getAdcodeByName(name: string) {
 
     return item.adcode;
 }
+
+export function getChildrenByName(parentName: string): Array<{ name:string, adcode:string }> | null {
+    //@ts-ignore
+    const item = metaData[parentName];
+    if(!item) {
+        return null;
+    }
+    //@ts-ignore
+    return item.children?.map((name) => ({
+        name,
+        //@ts-ignore
+        adcode: metaData[name]?.adcode
+    }));
+}
