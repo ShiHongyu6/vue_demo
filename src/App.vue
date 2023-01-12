@@ -1,18 +1,16 @@
 <template>
     <div class="bfc flex container">
         <div class="bfc flex flexWrap layout-left" style="font-size: 100px; color: #bfa">
-            <svg-icon :name="iconNme_options" :size="200" size-unit="px"></svg-icon>
-            <svg-icon name="alarm"></svg-icon>
+            <BarChart></BarChart>
         </div>
         <div class="bfc flex layout-midd">
-            <div class="bfc flex layout-midd-body">
-                <GeoMap :map-name="name2"></GeoMap>
+            <div class="bfc flex layout-midd-top">
             </div>
-            <div class="bfc flex layout-midd-bottom">
+            <div class="bfc flex layout-midd-body">
+                <ControledGeoMap></ControledGeoMap>
             </div>
         </div>
         <div class="bfc flex layout-right">
-            {{ covidState.data }}
         </div>
     </div>
 </template>
@@ -20,8 +18,8 @@
 <script setup lang="ts">
 import { ref, onMounted, inject } from 'vue'
 
-import GeoMap from '@/components/GeoMap/index.vue'
-import iconNme_options from '@/assets/icons/options.svg'
+import ControledGeoMap from '@/components/ControledGeoMap/index.vue'
+import BarChart from '@/components/BarChart/index.vue'
 import { useCovidStore } from '@/stores'
 import { $eventBusKey } from '@/injectGlobal'
 import { BusEvent } from '@/core/busEventEnum'
@@ -37,10 +35,10 @@ onMounted(async () => {
 const name1 = ref('中华人民共和国')
 const name2 = ref('中华人民共和国')
 
-setTimeout(() => {
-    name1.value = '内蒙古自治区'
-    name2.value = '陕西省'
-}, 3000);
+// setTimeout(() => {
+//     name1.value = '内蒙古自治区'
+//     name2.value = '陕西省'
+// }, 5000);
 
 </script>
 
@@ -60,38 +58,45 @@ setTimeout(() => {
 .container {
     height: 100%;
     background-image: url('/background.png');
+    background-repeat: no-repeat;
+    background-size: cover;
+    flex: 1 1 0;
+
 
     .layout {
         height: 100%;
     }
 
-    .layout-left,
+    .layout-left {
+        flex-basis: 0;
+        flex-grow: 9
+    }
     .layout-right {
         flex-basis: 0;
-        flex-grow: 5;
+        flex-grow: 10;
     }
 
     .layout-midd {
         flex-basis: 0;
-        flex-grow: 8;
+        flex-grow: 16;
 
         flex-direction: column;
         ;
 
-        &-bottom,
+        &-top,
         &-body {
             width: 100%;
         }
-
-        &-body {
-            flex-basis: 0;
-            flex-grow: 3;
-        }
-
-        &-bottom {
+        &-top {
             flex-basis: 0;
             flex-grow: 1;
         }
+
+        &-body {
+            flex-basis: 0;
+            flex-grow: 7;
+        }
+
 
     }
 }

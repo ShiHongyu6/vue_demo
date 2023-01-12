@@ -22,7 +22,7 @@ export default defineConfig({
   server: {
     proxy: {
       "/fetch/data": {
-        target: "https://c.m.163.com/ug/api/wuhan/app/data/list-total",
+        target: "http://localhost:5173/data.json",
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/fetch\/data/, '').concat(`?t=${Date.now()}`)
       },

@@ -9,7 +9,7 @@ export function getAdcodeByName(name: string) {
         return null;
     }
 
-    return item.adcode;
+    return item.adcode as string;
 }
 
 export function getChildrenByName(parentName: string): Array<{ name:string, adcode:string }> | null {

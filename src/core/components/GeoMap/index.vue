@@ -1,18 +1,18 @@
 <template>
-    <div id="map" ref="dom"></div>
+    <div class="map-container">
+        <div id="map" ref="domMountedRef"></div>
+        <div v-if="covidDataLoading || mapJSONLoading" class="loading">Loading...</div>
+    </div>
 </template>
 
 <script setup lang="ts">
-import type { EChartsType } from 'echarts';
-import { inject, ref, onMounted, computed, shallowRef, watchEffect, onUnmounted } from 'vue';
-import { useDebounceFn, useEventListener } from '@vueuse/core';
-import { Deferred } from 'ts-deferred'
+import { computed, watch } from 'vue';
+import { storeToRefs } from 'pinia'
 import { v4 as uuidv4 } from 'uuid'
 
 import { useCovidStore } from '@/stores'
-import { $echartsKey, $mapJSONResourceKey, $eventBusKey } from '@/injectGlobal/keys'
 import { getAdcodeByName, getChildrenByName } from './geoMetaGetters';
-import { BusEvent } from '@/core/busEventEnum'
+import { useEcharts, useEchartResize, useFetchMapJSON, useClickSelect } from '@/service/echartsHooks';
 
 const props = withDefaults(
     defineProps<{
@@ -21,63 +21,129 @@ const props = withDefaults(
     {
         mapName: '',
     }
-);
+)
+
+const emit = defineEmits<{
+    (e: 'onSelected', selectedData: SelectedDataType): void,
+}>()
+
+defineExpose({
+    selectByName,
+})
+
+// 仅在dom挂载之后 才能初始化echarts
+const { domMountedRef, echartInstanceRef } = useEcharts()
+
+//#region 选择相关的内容
+function selectGetter(data: any): SelectedDataType {
+    return {
+        name: data.name as string,
+        adcode: data.adcode as string,
+    }
+}
+//  在echartInstance上绑定点击选择事件
+const { selectedData, clearSelected } = useClickSelect(echartInstanceRef, selectGetter, 'adcode', { name: '', adcode: '' })
+//  每次selectedData被修改时 通过dispatch派发一个action进行选择
+watch(selectedData, (selected) => {
+    const payload = {
+        seriesIndex: 0,
+        name: selected.name
+    }
+    echartInstanceRef.value?.dispatchAction({
+        type: 'select',
+        ...payload
+    })
+
+    emit('onSelected', selected)
+})
+// 被definExpose导出给父组件调用
+function selectByName(name: string) {
+    const adcode = getAdcodeByName(name)
+    if(!adcode) {
+        return
+    }
+    selectedData.value = {
+        name,
+        adcode
+    }
+}
+
+
+// 根据地图名称获取map geo json，并且自动注册到全局echarts模块
+const adcode = computed(() => getAdcodeByName(props.mapName))
+const { isLoading: mapJSONLoading, mapJSONRef } = useFetchMapJSON(adcode, true, instanceUUID)
+
+const covidStore = useCovidStore()
+const { isLoading: covidDataLoading, data: covidDataRef, domesticData } = storeToRefs(covidStore)
+
+//#region 当数据或地图重新获取时 重新进行绘制
+let echartOption: any = initOption(instanceUUID)
+let setOptionFns: SetOptionFns | null = null
+watch([mapJSONRef, covidDataRef, echartInstanceRef], ([mapJSON, covidData, echartInstance], [mapJSONOld, covidDataOld]) => {
+    // 如果没有进行数据数据获取 什么都不做
+    if (mapJSON === mapJSONOld && covidData === covidDataOld) {
+        return
+    }
+
+    if (!mapJSON || !covidData) {
+        return
+    }
+
+    if(echartInstance) {
+        clearSelected()
+        setOptionFns = setOptionFnsCreator(echartOption, props.mapName, domesticData.value)
+        setOptionFns.setOptionSeries(selectedData.value)
+        setOptionFns.setOptionVisualMap()
+        echartInstance.setOption(echartOption, true)
+    }
+})
+//#endregion
+
+useEchartResize(echartInstanceRef)
+</script>
+
+<script lang="ts">
+export type SelectedDataType = {
+    name: string,
+    adcode: string,
+}
+type SetOptionFns = {
+    setOptionSeries: (selectedData: SelectedDataType) => void
+    setOptionVisualMap: () => void
+}
 
 // 用于echart注册地图 
 const instanceUUID = uuidv4()
 
-let chart: EChartsType | null = null
-const $echarts = inject($echartsKey)!
-const initDefer = new Deferred();
-const fechDataFinishDefer = new Deferred()
-
-
-//#region 当name改变时 动态修改地图和加载数据
-const adcode = computed(() => getAdcodeByName(props.mapName))
-const $mapJSONResource = inject($mapJSONResourceKey)
-let echartOption: any = null;
-let setOptionFns = null
-watchEffect(async () => {
-    // adcode.value是在await让步之前访问的 所以可以侦听到
-    const mapJson = await $mapJSONResource!.getResource(adcode.value)
-
-    await initDefer.promise
-    $echarts.registerMap(instanceUUID, <any>mapJson)
-    echartOption = initOption(instanceUUID)
-
-    await fechDataFinishDefer.promise
-    clearSelected()
-    setOptionFns = setOptionFnsCreator(props.mapName)
-    setOptionFns.all()
-    chart!.setOption(echartOption, true)
-});
-//#endregion
-
-//#region 订阅covidState获取数据的事件
-const $eventBus = inject($eventBusKey)! // 已经在全局注入了 一定存在
-const state = useCovidStore()
-$eventBus.on(BusEvent.CovidStateEvent.FETCH_DATA_FINISH, covidStateFetchFinishHandler)
-onUnmounted(() => $eventBus.off(BusEvent.CovidStateEvent.FETCH_DATA_FINISH, covidStateFetchFinishHandler));
-
-function covidStateFetchFinishHandler() {
-    fechDataFinishDefer.resolve()
+//#region 设置option
+function initOption(instanceUUID: string) {
+    return {
+        geo: {
+            map: instanceUUID,
+        },
+        tooltip: {
+            show: true,
+            // formatter: toolTipValueFomatter,
+            formatter: function (params: any) {
+                const [today, total] = params.data.details
+                return toolTipValueFomatter(params.name, today, total)
+            },
+        },
+        animation: false
+    }
 }
-//#endregion
-
-
-//#region 设置echart option
-//  鼠标点击地图时 选中某一块
-const selected = shallowRef({
-    name: '',
-    adcode: ''
-});
-function clearSelected() { selected.value = { name: '', adcode: '' } }
-function setOptionFnsCreator(name: string) {
+function setOptionFnsCreator(echartOption: any, name: string, domesticData: any): SetOptionFns {
     const children = getChildrenByName(name)
-    const nop = { setOptionSeries() { }, setOptionVisualMap() { }, all() { } }
+    const nop = { setOptionSeries(selectedData: SelectedDataType) { }, setOptionVisualMap() { } }
     if (!children) {
         return nop
     }
+
+    const parentAdcode = getAdcodeByName(name)
+    if (!parentAdcode) {
+        return nop
+    }
+
     const adcodeNameMap = new Map();
     children.forEach(({ name, adcode }) => {
         // 台湾在json中的id和meta中的adcode不一致 要特殊处理
@@ -87,9 +153,7 @@ function setOptionFnsCreator(name: string) {
         adcodeNameMap.set(adcode, name);
     })
 
-
-    const parentAdcode = getAdcodeByName(name)
-    const parentDataTreeNode = findSubTreeNode(state.domesticData, parentAdcode)
+    const parentDataTreeNode = findSubTreeNode(domesticData, parentAdcode)
     if (!parentDataTreeNode) {
         return nop
     }
@@ -133,7 +197,7 @@ function setOptionFnsCreator(name: string) {
 
     return {
         //  #region 设置 option.series 
-        setOptionSeries() {
+        setOptionSeries(selectedData: SelectedDataType) {
             Object.assign(echartOption, {
                 series: [
                     {
@@ -141,7 +205,7 @@ function setOptionFnsCreator(name: string) {
                         map: instanceUUID,
                         // geoIndex: 0,
                         data: childrenData.map((item: any) => ({
-                            selected: selected.value.adcode === item.id,
+                            selected: selectedData.adcode === item.id,
                             name: adcodeNameMap.get(item.id),
                             value: item.total.confirm,
                             details: [item.today, item.total],
@@ -194,78 +258,10 @@ function setOptionFnsCreator(name: string) {
                 },
             })
         },
-        //  #endregion
-
-        all() {
-            this.setOptionSeries()
-            this.setOptionVisualMap()
-        }
     }
 }
 //#endregion
 
-// #region 初始化echarts
-const dom = ref<HTMLDivElement>();
-function initEcharts() {
-    chart = $echarts.init(dom.value!);
-    chart.on('click', clickHandler);
-    initDefer.resolve()
-}
-onMounted(() => {
-    if (!props.mapName.length) {
-        return;
-    }
-
-    initEcharts()
-});
-onUnmounted(() => {
-    chart?.off('click', clickHandler)
-})
-// 单击选择事件处理
-function clickHandler(e: any) {
-    // 再次点击时 取消选择
-    if (e.data.adcode === selected.value.adcode) {
-        clearSelected()
-        return
-    }
-
-    selected.value = {
-        name: e.data.name,
-        adcode: e.data.adcode,
-    }
-}
-// #endregion
-
-// #region 处理resize
-function resizeHandler() {
-    if (!chart) {
-        return;
-    }
-
-    chart.resize();
-}
-// 防抖
-const debouncedResizeHandler = useDebounceFn(resizeHandler, 300);
-useEventListener(window, 'resize', debouncedResizeHandler);
-// #endregion
-</script>
-
-<script lang="ts">
-function initOption(instanceUUID: string) {
-    return {
-        geo: {
-            map: instanceUUID,
-        },
-        tooltip: {
-            show: true,
-            // formatter: toolTipValueFomatter,
-            formatter: function (params: any) {
-                const [today, total] = params.data.details
-                return toolTipValueFomatter(params.name, today, total)
-            },
-        },
-    }
-}
 
 function toolTipValueFomatter(name: string, today: any, total: any) {
     return ([
@@ -281,17 +277,25 @@ function toolTipValueFomatter(name: string, today: any, total: any) {
 </script>
 
 <style scoped>
-#map {
-    overflow: hidden;
-    display: flex;
+#map,
+.map-container,
+.loading {
     width: 100%;
-    justify-content: center;
-    align-items: center;
-    z-index: 1;
+    height: 100%
 }
 
 .control {
-    z-index: 1;
     position: absolute;
+}
+
+.map-container {
+    overflow: hidden;
+    position: relative;
+}
+
+.loading {
+    position: absolute;
+    left: 0;
+    top: 0;
 }
 </style>
